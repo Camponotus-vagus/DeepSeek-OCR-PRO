@@ -17,7 +17,7 @@ High-precision document OCR powered by the DeepSeek vision-language model. Extra
 
 ```bash
 # Clone the repository
-git clone https://github.com/YOUR_USER/DeepSeek-OCR-PRO.git
+git clone https://github.com/Camponotus-vagus/DeepSeek-OCR-PRO.git
 cd DeepSeek-OCR-PRO
 
 # Create virtual environment
