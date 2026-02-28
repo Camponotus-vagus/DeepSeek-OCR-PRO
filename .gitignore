@@ -6,7 +6,6 @@ __pycache__/
 *.egg-info/
 *.egg
 dist/
-build/
 *.whl
 
 # Virtual environments
@@ -36,8 +35,8 @@ models/README.md
 .DS_Store
 Thumbs.db
 
-# Output
-output/
+# Output (top-level only)
+/output/
 
 # Logs
 *.log
