@@ -12,9 +12,8 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: ubuntu-22.04
-            artifact_name: deepseek-ocr-linux
-            asset_ext: ""
+          # Linux excluded: PyTorch bundle exceeds GitHub's 2 GB asset limit.
+          # Linux users install from source: pip install -e ".[gui]"
           - os: macos-latest
             artifact_name: deepseek-ocr-macos-arm
             asset_ext: ""
