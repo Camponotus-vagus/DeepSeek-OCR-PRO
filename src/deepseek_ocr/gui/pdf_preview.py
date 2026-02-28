@@ -53,7 +53,8 @@ class PDFPreview(tk.Frame):
             self.after(0, self._render_current)
         except Exception as e:
             log.error(f"Failed to load PDF for preview: {e}")
-            self.after(0, lambda: self.page_label.configure(text=f"Error: {e}"))
+            err_msg = str(e)
+            self.after(0, lambda: self.page_label.configure(text=f"Error: {err_msg}"))
 
     def _render_current(self) -> None:
         if not self._doc or self._total_pages == 0:
@@ -61,10 +62,10 @@ class PDFPreview(tk.Frame):
 
         try:
             from PIL import Image, ImageTk
-            import fitz
+            import fitz as fitz_mod
 
             page = self._doc[self._current_page]
-            mat = fitz.Matrix(self._zoom, self._zoom)
+            mat = fitz_mod.Matrix(self._zoom, self._zoom)
             pix = page.get_pixmap(matrix=mat)
 
             img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)

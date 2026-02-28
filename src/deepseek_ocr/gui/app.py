@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import os
 import sys
 import threading
 import tkinter as tk
-from pathlib import Path
 from tkinter import filedialog, messagebox
 
 from ..config import OCRConfig
@@ -26,7 +24,7 @@ def launch_gui():
     ctk.set_default_color_theme("blue")
 
     root = ctk.CTk()
-    app = OCRApp(root)
+    OCRApp(root)
     root.mainloop()
 
 
