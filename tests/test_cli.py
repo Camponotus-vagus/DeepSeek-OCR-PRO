@@ -73,12 +73,16 @@ class TestCLIParser:
         args = self.parser.parse_args(["--config", "my_config.yaml", "in.pdf"])
         assert args.config == "my_config.yaml"
 
-    def test_no_inputs_no_gui(self):
-        """CLI should fail when no inputs and no --gui/--setup."""
-        import pytest
-        with pytest.raises(SystemExit) as exc_info:
-            main([])
-        assert exc_info.value.code == 2  # argparse error code
+    def test_no_inputs_launches_gui(self, monkeypatch):
+        """CLI should launch GUI when no arguments are provided (double-click)."""
+        launched = []
+        monkeypatch.setattr(
+            "deepseek_ocr.cli._launch_gui",
+            lambda: launched.append(True) or 0,
+        )
+        result = main([])
+        assert result == 0
+        assert launched, "GUI should be launched when no arguments are given"
 
 
 class TestCLIHelp:
