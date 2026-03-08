@@ -64,25 +64,27 @@ def load_model(model_path: str, device: str, quantize: str = "int8"):
 
 
 def _apply_int8_quantization(model):
-    """Apply PyTorch dynamic INT8 quantization to linear layers."""
+    """Apply PyTorch dynamic INT8 quantization to linear layers.
+
+    Quantizes one transformer layer at a time to avoid doubling the
+    model's memory footprint (critical on systems with limited RAM).
+    """
+    import gc
     import torch
 
     try:
-        # Quantize the language model (MoE) linear layers - bulk of compute
-        # Access the inner language model through the model attribute
         if hasattr(model, "model") and hasattr(model.model, "layers"):
-            model.model = torch.quantization.quantize_dynamic(
-                model.model,
-                {torch.nn.Linear},
-                dtype=torch.qint8,
-            )
-            log.info("INT8 quantization applied to language model layers")
+            # Quantize layer by layer to keep peak memory low
+            layers = model.model.layers
+            for i in range(len(layers)):
+                layers[i] = torch.quantization.quantize_dynamic(
+                    layers[i], {torch.nn.Linear}, dtype=torch.qint8,
+                )
+                gc.collect()
+            log.info(f"INT8 quantization applied to {len(layers)} language model layers")
         else:
-            # Fallback: quantize the whole model
             model = torch.quantization.quantize_dynamic(
-                model,
-                {torch.nn.Linear},
-                dtype=torch.qint8,
+                model, {torch.nn.Linear}, dtype=torch.qint8,
             )
             log.info("INT8 quantization applied to entire model")
     except Exception as e:

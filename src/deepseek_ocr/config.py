@@ -24,7 +24,7 @@ class OCRConfig:
     # NOTE: For scanned documents (B&W 1-bit, ~200 DPI), always use "accurate" mode.
     # "fast" mode (640px) downscales too aggressively for dense text pages.
     mode: str = "accurate"  # "accurate" (1024px, crop) or "fast" (640px, no crop)
-    num_workers: int = 2  # Preprocessing parallelism
+    num_workers: int = 1  # Preprocessing parallelism (keep low to save RAM)
 
     # Output
     output_dir: str = "./output"

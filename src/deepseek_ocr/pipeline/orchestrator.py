@@ -166,7 +166,15 @@ class Orchestrator:
                         progress.report_error(page_num, str(e))
                         continue
                 else:
-                    image = self.pdf_handler.extract_page_image(pdf_path, page_num)
+                    try:
+                        image = self.pdf_handler.extract_page_image(pdf_path, page_num)
+                    except Exception as e:
+                        log.error(f"Failed to extract page {page_num}: {e}")
+                        result = PageResult(page_num, "", 0, error=str(e))
+                        results[page_num] = result
+                        checkpoint.save_page(result)
+                        progress.report_error(page_num, str(e))
+                        continue
 
                 # Submit next prefetch
                 if submitted_idx < len(pages_to_process):
@@ -191,6 +199,11 @@ class Orchestrator:
                     progress.report_error(page_num, result.error)
                 else:
                     progress.report_page_done(page_num, result.processing_time)
+
+                # Free page image memory between pages
+                del image
+                import gc
+                gc.collect()
 
     def _extract_page_images(
         self, pdf_path: str, page_num: int, page_image, raw_text: str, output_dir: str

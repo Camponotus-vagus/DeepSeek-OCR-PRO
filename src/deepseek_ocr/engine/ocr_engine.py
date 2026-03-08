@@ -96,12 +96,19 @@ class OCREngine:
             if image.mode != "RGB":
                 image = image.convert("RGB")
 
-            # Save to temp file (model.infer() requires a file path)
-            with tempfile.TemporaryDirectory() as tmpdir:
+            # Save to temp file (model.infer() requires a file path).
+            # Use mkdtemp + manual cleanup instead of TemporaryDirectory
+            # because on Windows the model may still hold file locks when
+            # the context manager tries to delete.
+            import shutil
+            tmpdir = tempfile.mkdtemp()
+            try:
                 img_path = os.path.join(tmpdir, f"page_{page_num}.jpg")
                 image.save(img_path, "JPEG", quality=95)
 
                 text = self._run_inference(img_path, tmpdir)
+            finally:
+                shutil.rmtree(tmpdir, ignore_errors=True)
 
             elapsed = time.time() - start
             log.info(f"Page {page_num + 1} processed in {elapsed:.1f}s ({len(text)} chars)")
@@ -149,7 +156,7 @@ class OCREngine:
                 image_file=image_path,
                 output_path=output_dir,
                 base_size=self.config.base_size,
-                image_size=self.config.base_size,
+                image_size=640,  # Must match dynamic_preprocess crop size (always 640)
                 crop_mode=self.config.crop_mode,
                 eval_mode=True,  # CRITICAL: enables text return instead of streaming
             )
