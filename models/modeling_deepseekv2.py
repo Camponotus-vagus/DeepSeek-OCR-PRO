@@ -34,10 +34,11 @@ from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 from transformers.activations import ACT2FN
 from transformers.cache_utils import Cache, DynamicCache
 from transformers.modeling_attn_mask_utils import _prepare_4d_causal_attention_mask
-from transformers.models.llama.modeling_llama import (
-    LlamaAttention,
-    LlamaFlashAttention2
-)
+# NOTE: We no longer import LlamaAttention / LlamaFlashAttention2 from
+# transformers because the forward() signature changed across versions
+# (older: position_ids; newer: position_embeddings).  Instead we define a
+# self-contained CompatLlamaAttention that matches the OLD API expected by
+# DeepseekV2DecoderLayer.forward().  See class definition below ATTENTION_CLASSES.
 from transformers.modeling_outputs import (
     BaseModelOutputWithPast,
     CausalLMOutputWithPast,
@@ -1227,6 +1228,128 @@ class DeepseekV2FlashAttention2(DeepseekV2Attention):
         )
 
 
+def _standard_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
+    """Standard Llama-style rotary position embedding (NO dimension reshuffling).
+
+    DeepSeek's ``apply_rotary_pos_emb`` reshuffles the head dimensions before
+    applying the rotation which is specific to the MLA attention path.  The MHA
+    layers were trained with the standard Llama rotary convention, so we must
+    use this simpler version for ``CompatLlamaAttention``.
+    """
+    cos = cos[position_ids].unsqueeze(unsqueeze_dim)
+    sin = sin[position_ids].unsqueeze(unsqueeze_dim)
+    q_embed = (q * cos) + (rotate_half(q) * sin)
+    k_embed = (k * cos) + (rotate_half(k) * sin)
+    return q_embed, k_embed
+
+
+class CompatLlamaAttention(nn.Module):
+    """Drop-in replacement for the OLD transformers LlamaAttention.
+
+    Newer transformers (>=4.46) changed LlamaAttention.forward() to require a
+    ``position_embeddings`` positional arg instead of ``position_ids``.  This
+    class implements standard multi-head attention with rotary embeddings using
+    the *old* calling convention so that DeepseekV2DecoderLayer.forward() works
+    unchanged across all transformers versions.
+
+    Uses :func:`_standard_apply_rotary_pos_emb` (no dim reshuffling) rather
+    than the DeepSeek variant to match the weights trained with Llama MHA.
+    """
+
+    def __init__(self, config: DeepseekV2Config, layer_idx: Optional[int] = None):
+        super().__init__()
+        self.config = config
+        self.layer_idx = layer_idx
+        self.hidden_size = config.hidden_size
+        self.num_heads = config.num_attention_heads
+        self.num_kv_heads = getattr(config, "num_key_value_heads", self.num_heads)
+        self.head_dim = self.hidden_size // self.num_heads
+        self.num_kv_groups = self.num_heads // self.num_kv_heads
+        self.max_position_embeddings = config.max_position_embeddings
+        self.rope_theta = getattr(config, "rope_theta", 10000.0)
+        self.attention_dropout = getattr(config, "attention_dropout", 0.0)
+        self.is_causal = True
+
+        self.q_proj = nn.Linear(self.hidden_size, self.num_heads * self.head_dim,
+                                bias=getattr(config, "attention_bias", False))
+        self.k_proj = nn.Linear(self.hidden_size, self.num_kv_heads * self.head_dim,
+                                bias=getattr(config, "attention_bias", False))
+        self.v_proj = nn.Linear(self.hidden_size, self.num_kv_heads * self.head_dim,
+                                bias=getattr(config, "attention_bias", False))
+        self.o_proj = nn.Linear(self.num_heads * self.head_dim, self.hidden_size,
+                                bias=getattr(config, "attention_bias", False))
+
+        self.rotary_emb = DeepseekV2RotaryEmbedding(
+            self.head_dim,
+            max_position_embeddings=self.max_position_embeddings,
+            base=self.rope_theta,
+        )
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_value: Optional[Tuple[torch.Tensor]] = None,
+        output_attentions: bool = False,
+        use_cache: bool = False,
+        **kwargs,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
+        bsz, q_len, _ = hidden_states.size()
+
+        query_states = self.q_proj(hidden_states).view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
+        key_states = self.k_proj(hidden_states).view(bsz, q_len, self.num_kv_heads, self.head_dim).transpose(1, 2)
+        value_states = self.v_proj(hidden_states).view(bsz, q_len, self.num_kv_heads, self.head_dim).transpose(1, 2)
+
+        kv_seq_len = key_states.shape[-2]
+        if past_key_value is not None:
+            if isinstance(past_key_value, Cache):
+                kv_seq_len += past_key_value.get_seq_length(self.layer_idx)
+            else:
+                kv_seq_len += past_key_value[0].shape[-2]
+
+        cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
+        # Use STANDARD Llama rotary (no dim reshuffling) — matches weights
+        query_states, key_states = _standard_apply_rotary_pos_emb(
+            query_states, key_states, cos, sin, position_ids
+        )
+
+        if past_key_value is not None:
+            if isinstance(past_key_value, Cache):
+                cache_kwargs = {"sin": sin, "cos": cos}
+                key_states, value_states = past_key_value.update(
+                    key_states, value_states, self.layer_idx, cache_kwargs
+                )
+            else:
+                key_states = torch.cat([past_key_value[0], key_states], dim=2)
+                value_states = torch.cat([past_key_value[1], value_states], dim=2)
+                past_key_value = (key_states, value_states)
+
+        if use_cache and not isinstance(past_key_value, Cache):
+            past_key_value = (key_states, value_states)
+
+        # Repeat KV heads if GQA
+        key_states = repeat_kv(key_states, self.num_kv_groups)
+        value_states = repeat_kv(value_states, self.num_kv_groups)
+
+        attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(self.head_dim)
+
+        if attention_mask is not None:
+            attn_weights = attn_weights + attention_mask
+
+        attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
+        attn_weights = nn.functional.dropout(attn_weights, p=self.attention_dropout, training=self.training)
+        attn_output = torch.matmul(attn_weights, value_states)
+
+        attn_output = attn_output.transpose(1, 2).contiguous().reshape(bsz, q_len, self.hidden_size)
+        attn_output = self.o_proj(attn_output)
+
+        if not output_attentions:
+            attn_weights = None
+
+        return attn_output, attn_weights, past_key_value
+
+
 ATTENTION_CLASSES = {
     "eager": DeepseekV2Attention,
     "flash_attention_2": DeepseekV2FlashAttention2,
@@ -1234,8 +1357,8 @@ ATTENTION_CLASSES = {
     "mla_eager": DeepseekV2Attention,
     "mla_flash_attention_2": DeepseekV2FlashAttention2,
 
-    "mha_eager": LlamaAttention,
-    "mha_flash_attention_2": LlamaFlashAttention2
+    "mha_eager": CompatLlamaAttention,
+    "mha_flash_attention_2": CompatLlamaAttention,
 }
 
 
@@ -1780,7 +1903,7 @@ class DeepseekV2ForCausalLM(DeepseekV2PreTrainedModel):
             if isinstance(past_key_values, Cache):
                 cache_length = past_key_values.get_seq_length()
                 past_length = past_key_values.seen_tokens
-                max_cache_length = past_key_values.get_max_length()
+                max_cache_length = past_key_values.get_max_length() if hasattr(past_key_values, 'get_max_length') else None
             else:
                 cache_length = past_length = past_key_values[0][0].shape[2]
                 max_cache_length = None

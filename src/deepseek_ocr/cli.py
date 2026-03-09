@@ -45,8 +45,8 @@ Examples:
         help="Path to model directory (default: ./models)",
     )
     parser.add_argument(
-        "--quantize", default="int8", choices=["none", "int8"],
-        help="Quantization: none or int8 (default: int8)",
+        "--quantize", default="none", choices=["none", "int8"],
+        help="Quantization: none or int8 (default: none, int8 hurts OCR quality)",
     )
     parser.add_argument(
         "--device", default="auto", choices=["auto", "cpu", "cuda", "mps"],
@@ -69,12 +69,16 @@ Examples:
         help="Prompt mode: layout (markdown output) or freeocr (plain text, default: layout)",
     )
     parser.add_argument(
+        "--max-tokens", type=int, default=4096, dest="max_tokens",
+        help="Max tokens to generate per page (default: 4096, lower = faster)",
+    )
+    parser.add_argument(
         "--config", metavar="FILE",
         help="Load config from YAML/JSON file",
     )
     parser.add_argument(
         "--gui", action="store_true",
-        help="Launch GUI mode",
+        help="Launch GUI mode (default when no arguments are given)",
     )
     parser.add_argument(
         "--setup", action="store_true",
@@ -96,17 +100,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    # GUI mode
-    if args.gui:
+    # GUI mode — also launch GUI when no arguments are provided at all
+    # (e.g. user double-clicks the .exe)
+    if args.gui or (not args.inputs and not args.setup):
         return _launch_gui()
 
     # Setup/download mode
     if args.setup:
         return _run_setup(args)
-
-    # Validate inputs
-    if not args.inputs:
-        parser.error("No input files specified. Use --gui for GUI mode or --help for usage.")
 
     # Build config
     from .config import OCRConfig

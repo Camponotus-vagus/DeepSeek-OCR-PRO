@@ -96,12 +96,19 @@ class OCREngine:
             if image.mode != "RGB":
                 image = image.convert("RGB")
 
-            # Save to temp file (model.infer() requires a file path)
-            with tempfile.TemporaryDirectory() as tmpdir:
+            # Save to temp file (model.infer() requires a file path).
+            # Use mkdtemp + manual cleanup instead of TemporaryDirectory
+            # because on Windows the model may still hold file locks when
+            # the context manager tries to delete.
+            import shutil
+            tmpdir = tempfile.mkdtemp()
+            try:
                 img_path = os.path.join(tmpdir, f"page_{page_num}.jpg")
                 image.save(img_path, "JPEG", quality=95)
 
                 text = self._run_inference(img_path, tmpdir)
+            finally:
+                shutil.rmtree(tmpdir, ignore_errors=True)
 
             elapsed = time.time() - start
             log.info(f"Page {page_num + 1} processed in {elapsed:.1f}s ({len(text)} chars)")
@@ -131,6 +138,8 @@ class OCREngine:
         We patch torch.autocast on CPU to use float32 instead, which is
         both faster (native) and compatible with quantized layers.
         """
+        import contextlib
+        import io
         import torch
 
         # Patch autocast for CPU: force float32 instead of bfloat16
@@ -143,16 +152,19 @@ class OCREngine:
             torch.autocast = _patched_autocast
 
         try:
-            result = self._model.infer(
-                self._tokenizer,
-                prompt=self.config.prompt,
-                image_file=image_path,
-                output_path=output_dir,
-                base_size=self.config.base_size,
-                image_size=self.config.base_size,
-                crop_mode=self.config.crop_mode,
-                eval_mode=True,  # CRITICAL: enables text return instead of streaming
-            )
+            # Suppress noisy debug prints from model code (BASE: / PATCHES: etc.)
+            with contextlib.redirect_stdout(io.StringIO()):
+                result = self._model.infer(
+                    self._tokenizer,
+                    prompt=self.config.prompt,
+                    image_file=image_path,
+                    output_path=output_dir,
+                    base_size=self.config.base_size,
+                    image_size=640,  # Must match dynamic_preprocess crop size (always 640)
+                    crop_mode=self.config.crop_mode,
+                    eval_mode=True,  # CRITICAL: enables text return instead of streaming
+                    max_new_tokens=self.config.max_new_tokens,
+                )
         finally:
             # Restore original autocast
             if self._device == "cpu":

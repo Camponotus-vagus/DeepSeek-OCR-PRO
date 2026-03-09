@@ -47,6 +47,42 @@ class TestCleanOcrText:
         result = clean_ocr_text(text)
         assert result == ""
 
+    def test_collapses_repeated_lines(self):
+        text = "Hello\n" * 20
+        result = clean_ocr_text(text)
+        assert result.count("Hello") == 3
+
+    def test_removes_numeric_dot_floods(self):
+        text = "Good text\n0.0.0.0.0.0.0.0.0.0.0.0.0.0.0\nMore good text"
+        result = clean_ocr_text(text)
+        assert "0.0.0.0" not in result
+        assert "Good text" in result
+        assert "More good text" in result
+
+    def test_removes_integer_sequence_floods(self):
+        nums = " ".join(str(i) for i in range(1, 100))
+        text = f"Title\n{nums}\nContent"
+        result = clean_ocr_text(text)
+        assert "50 51 52" not in result
+        assert "Title" in result
+        assert "Content" in result
+
+    def test_removes_coordinate_floods(self):
+        text = "text[[0.0, 0.0, 997, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.3, 0.3, 0.3, 0.3, 0.3, 0.4, 0.4, 0.4, 0.4, 0.4, 0.5, 0.5]]"
+        result = clean_ocr_text(text)
+        assert "[[0.0" not in result
+
+    def test_removes_junk_html_tables(self):
+        text = '<table><tr><td></td><td></td><td>None</td><td>None</td><td>None</td><td>None</td><td>None</td><td>None</td></tr><tr><td></td><td></td><td></td><td></td><td></td><td></td></tr></table>'
+        result = clean_ocr_text(text)
+        assert "<table>" not in result
+
+    def test_preserves_real_tables(self):
+        text = '<table><tr><td>Name</td><td>Value</td></tr><tr><td>Alpha</td><td>100</td></tr></table>'
+        result = clean_ocr_text(text)
+        assert "<table>" in result
+        assert "Alpha" in result
+
 
 class TestCleanForMarkdown:
     def test_basic_text(self):

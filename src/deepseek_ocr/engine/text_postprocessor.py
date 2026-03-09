@@ -8,10 +8,87 @@ import logging
 log = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Repetition & garbage detection helpers
+# ---------------------------------------------------------------------------
+
+def _collapse_repeated_lines(text: str, max_repeats: int = 3) -> str:
+    """Collapse consecutive identical lines down to *max_repeats* copies."""
+    lines = text.split("\n")
+    out: list[str] = []
+    prev = None
+    count = 0
+    for line in lines:
+        stripped = line.strip()
+        if stripped == prev:
+            count += 1
+            if count <= max_repeats:
+                out.append(line)
+        else:
+            prev = stripped
+            count = 1
+            out.append(line)
+    return "\n".join(out)
+
+
+def _remove_numeric_floods(text: str) -> str:
+    r"""Remove lines that are *only* long numeric / dot sequences.
+
+    Catches patterns like:
+      ``0.0.0.0.0.0.0.0.0.0...``
+      ``1.1.1.1.1.1.2.1.1...``
+      ``20 21 22 23 24 25 26 27...``
+      ``text[[0.0, 0.0, 997, 0.0, ...]]``
+    """
+    cleaned: list[str] = []
+    for line in text.split("\n"):
+        s = line.strip()
+        # Skip empty lines (preserve them)
+        if not s:
+            cleaned.append(line)
+            continue
+        # Pattern 1: dot-separated digit floods  e.g. "0.0.0.0.0..."
+        if re.fullmatch(r"[\d]+(?:\.[\d]+){10,}", s):
+            log.debug("Removed numeric flood: %s...", s[:60])
+            continue
+        # Pattern 2: space-separated integer floods  e.g. "20 21 22 23 ..."
+        if re.fullmatch(r"\d+(?:\s+\d+){15,}", s):
+            log.debug("Removed integer sequence: %s...", s[:60])
+            continue
+        # Pattern 3: coordinate/array floods  e.g. "text[[0.0, 0.0, 997, ..."
+        if re.search(r"\[\[[\d.,\s]{100,}", s):
+            log.debug("Removed coordinate flood: %s...", s[:60])
+            continue
+        # Pattern 4: "None." floods in table cells
+        if s.count("None") > 10:
+            log.debug("Removed None flood: %s...", s[:60])
+            continue
+        cleaned.append(line)
+    return "\n".join(cleaned)
+
+
+def _remove_empty_html_tables(text: str) -> str:
+    """Remove HTML <table> blocks that contain mostly empty cells or 'None'."""
+    def _is_junk_table(match: re.Match) -> str:
+        table_html = match.group(0)
+        # Count real content vs empty/None cells
+        cells = re.findall(r"<td[^>]*>(.*?)</td>", table_html, re.DOTALL)
+        if not cells:
+            return table_html
+        non_empty = sum(1 for c in cells if c.strip() and c.strip() not in ("None", "None."))
+        if len(cells) > 5 and non_empty / len(cells) < 0.15:
+            log.debug("Removed junk table with %d/%d empty cells", len(cells) - non_empty, len(cells))
+            return ""
+        return table_html
+
+    return re.sub(r"<table>.*?</table>", _is_junk_table, text, flags=re.DOTALL)
+
+
 def clean_ocr_text(raw_text: str) -> str:
     """Clean raw model output for plain text usage.
 
-    Removes grounding tags, normalizes whitespace, and fixes common artifacts.
+    Removes grounding tags, normalizes whitespace, fixes common artifacts,
+    and strips repetitive / garbage output from degenerate model runs.
     """
     text = raw_text
 
@@ -23,6 +100,11 @@ def clean_ocr_text(raw_text: str) -> str:
 
     # Fix LaTeX artifacts
     text = text.replace("\\coloneqq", ":=").replace("\\eqqcolon", "=:")
+
+    # --- Garbage / repetition cleanup ---
+    text = _remove_numeric_floods(text)
+    text = _remove_empty_html_tables(text)
+    text = _collapse_repeated_lines(text)
 
     # Normalize multiple blank lines to at most 2
     text = re.sub(r"\n{3,}", "\n\n", text)
@@ -66,6 +148,11 @@ def clean_for_markdown(raw_text: str) -> str:
 
     # Fix LaTeX artifacts
     text = text.replace("\\coloneqq", ":=").replace("\\eqqcolon", "=:")
+
+    # --- Garbage / repetition cleanup ---
+    text = _remove_numeric_floods(text)
+    text = _remove_empty_html_tables(text)
+    text = _collapse_repeated_lines(text)
 
     # Normalize multiple blank lines
     text = re.sub(r"\n{3,}", "\n\n", text)

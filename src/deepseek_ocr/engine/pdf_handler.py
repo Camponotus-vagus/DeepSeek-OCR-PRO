@@ -13,6 +13,9 @@ log = logging.getLogger(__name__)
 class PDFHandler:
     """Extract page images from PDFs using PyMuPDF (fitz)."""
 
+    # Cap images at ~4 megapixels to avoid MemoryError on large scans
+    MAX_PIXELS = 4_000_000
+
     def __init__(self, fallback_dpi: int = 200):
         self._fallback_dpi = fallback_dpi
 
@@ -93,6 +96,21 @@ class PDFHandler:
             if img.mode != "RGB":
                 img = img.convert("RGB")
 
+            # Apply page rotation to the extracted image.
+            # The raw embedded image is stored without rotation, but the page
+            # may specify rotation (90, 180, 270) that must be applied so the
+            # text appears upright.
+            rotation = page.rotation
+            if rotation == 90:
+                img = img.transpose(Image.ROTATE_270)  # 90° CW display = 270° CCW PIL
+            elif rotation == 180:
+                img = img.transpose(Image.ROTATE_180)
+            elif rotation == 270:
+                img = img.transpose(Image.ROTATE_90)   # 270° CW display = 90° CCW PIL
+            if rotation:
+                log.debug(f"Applied page rotation {rotation}° to embedded image")
+
+            img = self._downscale_if_needed(img)
             log.debug(f"Extracted embedded image: {img.size[0]}x{img.size[1]}")
             return img
 
@@ -101,19 +119,37 @@ class PDFHandler:
             return None
 
     def _rasterize_page(self, page) -> Image.Image:
-        """Rasterize a page at the configured DPI."""
+        """Rasterize a page at the configured DPI, retrying at lower DPI on MemoryError."""
         import fitz
 
-        dpi = self._fallback_dpi
-        mat = fitz.Matrix(dpi / 72, dpi / 72)
-        pix = page.get_pixmap(matrix=mat)
+        for dpi in (self._fallback_dpi, 150, 100):
+            try:
+                mat = fitz.Matrix(dpi / 72, dpi / 72)
+                pix = page.get_pixmap(matrix=mat)
 
-        if pix.alpha:
-            pix = fitz.Pixmap(fitz.csRGB, pix)
+                if pix.alpha:
+                    pix = fitz.Pixmap(fitz.csRGB, pix)
 
-        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-        log.debug(f"Rasterized page at {dpi} DPI: {img.size[0]}x{img.size[1]}")
-        return img
+                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                img = self._downscale_if_needed(img)
+                log.debug(f"Rasterized page at {dpi} DPI: {img.size[0]}x{img.size[1]}")
+                return img
+            except MemoryError:
+                log.warning(f"MemoryError at {dpi} DPI, retrying at lower resolution")
+                continue
+
+        raise RuntimeError("Unable to rasterize page: not enough memory even at 100 DPI")
+
+    def _downscale_if_needed(self, img: Image.Image) -> Image.Image:
+        """Downscale an image if it exceeds MAX_PIXELS to avoid OOM downstream."""
+        w, h = img.size
+        pixels = w * h
+        if pixels <= self.MAX_PIXELS:
+            return img
+        scale = (self.MAX_PIXELS / pixels) ** 0.5
+        new_w, new_h = int(w * scale), int(h * scale)
+        log.debug(f"Downscaling {w}x{h} -> {new_w}x{new_h} to stay within memory limits")
+        return img.resize((new_w, new_h), Image.LANCZOS)
 
     def get_pdf_info(self, pdf_path: str) -> dict:
         """Get basic PDF metadata."""
