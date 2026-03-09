@@ -69,6 +69,10 @@ Examples:
         help="Prompt mode: layout (markdown output) or freeocr (plain text, default: layout)",
     )
     parser.add_argument(
+        "--max-tokens", type=int, default=4096, dest="max_tokens",
+        help="Max tokens to generate per page (default: 4096, lower = faster)",
+    )
+    parser.add_argument(
         "--config", metavar="FILE",
         help="Load config from YAML/JSON file",
     )

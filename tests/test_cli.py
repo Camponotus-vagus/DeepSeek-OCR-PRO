@@ -69,6 +69,14 @@ class TestCLIParser:
         args = self.parser.parse_args(["in.pdf", "--verbose"])
         assert args.verbose is True
 
+    def test_max_tokens(self):
+        args = self.parser.parse_args(["in.pdf", "--max-tokens", "2048"])
+        assert args.max_tokens == 2048
+
+    def test_max_tokens_default(self):
+        args = self.parser.parse_args(["in.pdf"])
+        assert args.max_tokens == 4096
+
     def test_config_file(self):
         args = self.parser.parse_args(["--config", "my_config.yaml", "in.pdf"])
         assert args.config == "my_config.yaml"

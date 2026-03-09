@@ -138,6 +138,8 @@ class OCREngine:
         We patch torch.autocast on CPU to use float32 instead, which is
         both faster (native) and compatible with quantized layers.
         """
+        import contextlib
+        import io
         import torch
 
         # Patch autocast for CPU: force float32 instead of bfloat16
@@ -150,16 +152,19 @@ class OCREngine:
             torch.autocast = _patched_autocast
 
         try:
-            result = self._model.infer(
-                self._tokenizer,
-                prompt=self.config.prompt,
-                image_file=image_path,
-                output_path=output_dir,
-                base_size=self.config.base_size,
-                image_size=640,  # Must match dynamic_preprocess crop size (always 640)
-                crop_mode=self.config.crop_mode,
-                eval_mode=True,  # CRITICAL: enables text return instead of streaming
-            )
+            # Suppress noisy debug prints from model code (BASE: / PATCHES: etc.)
+            with contextlib.redirect_stdout(io.StringIO()):
+                result = self._model.infer(
+                    self._tokenizer,
+                    prompt=self.config.prompt,
+                    image_file=image_path,
+                    output_path=output_dir,
+                    base_size=self.config.base_size,
+                    image_size=640,  # Must match dynamic_preprocess crop size (always 640)
+                    crop_mode=self.config.crop_mode,
+                    eval_mode=True,  # CRITICAL: enables text return instead of streaming
+                    max_new_tokens=self.config.max_new_tokens,
+                )
         finally:
             # Restore original autocast
             if self._device == "cpu":

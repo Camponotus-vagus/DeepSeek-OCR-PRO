@@ -16,6 +16,7 @@ class TestOCRConfig:
         assert config.formats == ["txt"]
         assert config.resume is False
         assert config.extract_images is False
+        assert config.max_new_tokens == 4096
 
     def test_base_size_accurate(self):
         config = OCRConfig(mode="accurate")
@@ -72,6 +73,15 @@ class TestOCRConfig:
         config = OCRConfig(pdf_paths=[], num_workers=0)
         errors = config.validate()
         assert any("num_workers" in e for e in errors)
+
+    def test_validate_invalid_max_new_tokens(self):
+        config = OCRConfig(pdf_paths=[], max_new_tokens=50)
+        errors = config.validate()
+        assert any("max_new_tokens" in e for e in errors)
+
+    def test_max_new_tokens_custom(self):
+        config = OCRConfig(max_new_tokens=2048)
+        assert config.max_new_tokens == 2048
 
     def test_from_file_json(self, tmp_path):
         config_data = {

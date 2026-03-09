@@ -700,7 +700,7 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
 
 
 
-    def infer(self, tokenizer, prompt='', image_file='', output_path = '', base_size=1024, image_size=640, crop_mode=True, test_compress=False, save_results=False, eval_mode=False):
+    def infer(self, tokenizer, prompt='', image_file='', output_path = '', base_size=1024, image_size=640, crop_mode=True, test_compress=False, save_results=False, eval_mode=False, max_new_tokens=4096):
         self.disable_torch_init()
 
         os.makedirs(output_path, exist_ok=True)
@@ -926,7 +926,7 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
                         temperature=0.0,
                         eos_token_id=tokenizer.eos_token_id,
                         streamer=streamer,
-                        max_new_tokens=8192,
+                        max_new_tokens=max_new_tokens,
                         no_repeat_ngram_size = 20,
                         use_cache = True
                         )
@@ -943,7 +943,7 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
                         # num_beams = 1,
                         temperature=0.0,
                         eos_token_id=tokenizer.eos_token_id,
-                        max_new_tokens=8192,
+                        max_new_tokens=max_new_tokens,
                         no_repeat_ngram_size = 35,
                         use_cache = True
                         )

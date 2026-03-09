@@ -31,6 +31,9 @@ class OCRConfig:
     formats: list[str] = dataclasses.field(default_factory=lambda: ["txt"])
     extract_images: bool = False
 
+    # Generation
+    max_new_tokens: int = 4096  # Cap model generation length (lower = faster per page)
+
     # Resume
     resume: bool = False
 
@@ -84,6 +87,8 @@ class OCRConfig:
             errors.append(f"Invalid prompt_mode: {self.prompt_mode}.")
         if self.num_workers < 1:
             errors.append("num_workers must be >= 1.")
+        if self.max_new_tokens < 128:
+            errors.append("max_new_tokens must be >= 128.")
         return errors
 
     @classmethod
@@ -119,6 +124,7 @@ class OCRConfig:
             output_dir=args.output,
             formats=args.format or ["txt"],
             extract_images=args.extract_images,
+            max_new_tokens=getattr(args, "max_tokens", 4096),
             resume=args.resume,
             prompt_mode=args.prompt,
             verbose=args.verbose,
