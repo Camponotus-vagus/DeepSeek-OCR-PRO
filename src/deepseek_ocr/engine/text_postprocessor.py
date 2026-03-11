@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import logging
+import json
 
 log = logging.getLogger(__name__)
 
@@ -90,7 +91,7 @@ def extract_grounding_regions(raw_text: str) -> list[dict]:
             continue
         try:
             # coords_str is like "[[x1,y1,x2,y2]]" or "[[x1,y1,x2,y2],[...]]"
-            coords_list = eval(coords_str)  # Safe here: model output, not user input
+            coords_list = json.loads(coords_str)
             for coords in coords_list:
                 if len(coords) == 4:
                     regions.append({
