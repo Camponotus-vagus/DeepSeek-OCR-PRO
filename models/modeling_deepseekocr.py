@@ -22,9 +22,12 @@ import re
 from tqdm import tqdm
 import numpy as np
 import time
+import json
 
 
 def load_image(image_path):
+    if isinstance(image_path, Image.Image):
+        return image_path
 
     try:
         image = Image.open(image_path)
@@ -62,7 +65,7 @@ def extract_coordinates_and_label(ref_text, image_width, image_height):
 
     try:
         label_type = ref_text[1]
-        cor_list = eval(ref_text[2])
+        cor_list = json.loads(ref_text[2])
     except Exception as e:
         print(e)
         return None
@@ -716,7 +719,7 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
                     # "content": "<image>\nFree OCR. ",
                     # "content": "<image>\nParse the figure. ",
                     # "content": "<image>\nExtract the text in the image. ",
-                    "images": [f'{image_file}'],
+                    "images": [image_file],
                 },
                 {"role": "<|Assistant|>", "content": ""},
             ]
@@ -909,8 +912,13 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
 
 
         device_type = self.device.type
-        if device_type == "mps": device_type = "cpu"  # Autocast on MPS may not support bfloat16 natively
-        autocast_dtype = torch.float16 if self.device.type == "mps" else torch.bfloat16
+        if device_type == "mps":
+            device_type = "cpu"
+            autocast_dtype = torch.float32
+        elif device_type == "cpu":
+            autocast_dtype = torch.float32
+        else:
+            autocast_dtype = torch.bfloat16
 
         if not eval_mode:
             streamer = NoEOSTextStreamer(tokenizer, skip_prompt=True, skip_special_tokens=False)
