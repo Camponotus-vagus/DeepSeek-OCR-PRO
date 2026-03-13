@@ -19,12 +19,15 @@ from .conversation import get_conv_template
 from abc import ABC
 import math
 import re
+import json
 from tqdm import tqdm
 import numpy as np
 import time
 
 
 def load_image(image_path):
+    if isinstance(image_path, Image.Image):
+        return image_path
 
     try:
         image = Image.open(image_path)
@@ -62,7 +65,9 @@ def extract_coordinates_and_label(ref_text, image_width, image_height):
 
     try:
         label_type = ref_text[1]
-        cor_list = eval(ref_text[2])
+        # Replace single quotes with double quotes for JSON compatibility if needed
+        coords_str = ref_text[2].replace("'", '"')
+        cor_list = json.loads(coords_str)
     except Exception as e:
         print(e)
         return None
@@ -703,8 +708,9 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
     def infer(self, tokenizer, prompt='', image_file='', output_path = '', base_size=1024, image_size=640, crop_mode=True, test_compress=False, save_results=False, eval_mode=False):
         self.disable_torch_init()
 
-        os.makedirs(output_path, exist_ok=True)
-        os.makedirs(f'{output_path}/images', exist_ok=True)
+        if output_path:
+            os.makedirs(output_path, exist_ok=True)
+            os.makedirs(f'{output_path}/images', exist_ok=True)
 
         if prompt and image_file:
             conversation = [
@@ -909,8 +915,14 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
 
 
         device_type = self.device.type
-        if device_type == "mps": device_type = "cpu"  # Autocast on MPS may not support bfloat16 natively
-        autocast_dtype = torch.float16 if self.device.type == "mps" else torch.bfloat16
+        if device_type == "mps":
+            device_type = "cpu"  # Autocast on MPS may not support bfloat16 natively
+
+        if self.device.type == "cpu":
+            # float32 is native and faster on CPU than emulated bfloat16
+            autocast_dtype = torch.float32
+        else:
+            autocast_dtype = torch.float16 if self.device.type == "mps" else torch.bfloat16
 
         if not eval_mode:
             streamer = NoEOSTextStreamer(tokenizer, skip_prompt=True, skip_special_tokens=False)
@@ -971,70 +983,73 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
 
 
         if '<image>' in conversation[0]['content'] and save_results:
-            outputs = tokenizer.decode(output_ids[0, input_ids.unsqueeze(0).shape[1]:])
+            outputs_text = tokenizer.decode(output_ids[0, input_ids.unsqueeze(0).shape[1]:])
             stop_str = '<｜end▁of▁sentence｜>'
 
             print('='*15 + 'save results:' + '='*15)
-            
-            # # # # conv.messages[-1][-1] = outputs
-            if outputs.endswith(stop_str):
-                outputs = outputs[:-len(stop_str)]
-            outputs = outputs.strip()
 
-            matches_ref, matches_images, mathes_other = re_match(outputs)
+            # # # # conv.messages[-1][-1] = outputs
+            if outputs_text.endswith(stop_str):
+                outputs_text = outputs_text[:-len(stop_str)]
+            outputs_text = outputs_text.strip()
+
+            matches_ref, matches_images, mathes_other = re_match(outputs_text)
             # print(matches_ref)
             result = process_image_with_refs(image_draw, matches_ref, output_path)
 
-
             for idx, a_match_image in enumerate(tqdm(matches_images, desc="image")):
-                outputs = outputs.replace(a_match_image, '![](images/' + str(idx) + '.jpg)\n')
-            
-            for idx, a_match_other in enumerate(tqdm(mathes_other, desc="other")):
-                outputs = outputs.replace(a_match_other, '').replace('\\coloneqq', ':=').replace('\\eqqcolon', '=:')
+                outputs_text = outputs_text.replace(a_match_image, '![](images/' + str(idx) + '.jpg)\n')
 
+            for idx, a_match_other in enumerate(tqdm(mathes_other, desc="other")):
+                outputs_text = outputs_text.replace(a_match_other, '').replace('\\coloneqq', ':=').replace('\\eqqcolon', '=:')
 
             # if 'structural formula' in conversation[0]['content']:
             #     outputs = '<smiles>' + outputs + '</smiles>'
-            with open(f'{output_path}/result.mmd', 'w', encoding = 'utf-8') as afile:
-                afile.write(outputs)
+            with open(f'{output_path}/result.mmd', 'w', encoding='utf-8') as afile:
+                afile.write(outputs_text)
 
-            if 'line_type' in outputs:
+            if 'line_type' in outputs_text:
                 import matplotlib.pyplot as plt
-                lines = eval(outputs)['Line']['line']
+                try:
+                    outputs_json = json.loads(outputs_text)
+                    lines = outputs_json['Line']['line']
+                    line_type = outputs_json['Line']['line_type']
+                    endpoints = outputs_json['Line']['line_endpoint']
 
-                line_type = eval(outputs)['Line']['line_type']
-                # print(lines)
+                    fig, ax = plt.subplots(figsize=(3, 3), dpi=200)
+                    ax.set_xlim(-15, 15)
+                    ax.set_ylim(-15, 15)
 
-                endpoints = eval(outputs)['Line']['line_endpoint']
+                    for idx, line in enumerate(lines):
+                        try:
+                            p0_str = line.split(' -- ')[0].replace("'", '"')
+                            p1_str = line.split(' -- ')[-1].replace("'", '"')
+                            p0 = json.loads(p0_str)
+                            p1 = json.loads(p1_str)
 
-                fig, ax = plt.subplots(figsize=(3,3), dpi=200)
-                ax.set_xlim(-15, 15)
-                ax.set_ylim(-15, 15)
+                            if line_type[idx] == '--':
+                                ax.plot([p0[0], p1[0]], [p0[1], p1[1]], linewidth=0.8, color='k')
+                            else:
+                                ax.plot([p0[0], p1[0]], [p0[1], p1[1]], linewidth=0.8, color='k')
 
-                for idx, line in enumerate(lines):
-                    try:
-                        p0 = eval(line.split(' -- ')[0])
-                        p1 = eval(line.split(' -- ')[-1])
+                            ax.scatter(p0[0], p0[1], s=5, color='k')
+                            ax.scatter(p1[0], p1[1], s=5, color='k')
+                        except Exception:
+                            pass
 
-                        if line_type[idx] == '--':
-                            ax.plot([p0[0], p1[0]], [p0[1], p1[1]], linewidth=0.8, color='k')
-                        else:
-                            ax.plot([p0[0], p1[0]], [p0[1], p1[1]], linewidth = 0.8, color = 'k')
+                    for endpoint in endpoints:
+                        try:
+                            label = endpoint.split(': ')[0]
+                            coord_str = endpoint.split(': ')[1].replace("'", '"')
+                            (x, y) = json.loads(coord_str)
+                            ax.annotate(label, (x, y), xytext=(1, 1), textcoords='offset points',
+                                        fontsize=5, fontweight='light')
+                        except Exception:
+                            pass
 
-                        ax.scatter(p0[0], p0[1], s=5, color = 'k')
-                        ax.scatter(p1[0], p1[1], s=5, color = 'k')
-                    except:
-                        pass
-
-                for endpoint in endpoints:
-
-                    label = endpoint.split(': ')[0]
-                    (x, y) = eval(endpoint.split(': ')[1])
-                    ax.annotate(label, (x, y), xytext=(1, 1), textcoords='offset points', 
-                                fontsize=5, fontweight='light')
-                
-
-                plt.savefig(f'{output_path}/geo.jpg')
-                plt.close()
+                    plt.savefig(f'{output_path}/geo.jpg')
+                    plt.close()
+                except Exception:
+                    pass
 
             result.save(f"{output_path}/result_with_boxes.jpg")

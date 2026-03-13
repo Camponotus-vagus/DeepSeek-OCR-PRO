@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-import os
-import tempfile
 import time
 
 from PIL import Image
@@ -96,12 +94,9 @@ class OCREngine:
             if image.mode != "RGB":
                 image = image.convert("RGB")
 
-            # Save to temp file (model.infer() requires a file path)
-            with tempfile.TemporaryDirectory() as tmpdir:
-                img_path = os.path.join(tmpdir, f"page_{page_num}.jpg")
-                image.save(img_path, "JPEG", quality=95)
-
-                text = self._run_inference(img_path, tmpdir)
+            # Zero-copy inference: pass the PIL Image object directly to the model
+            # instead of saving to a temporary file.
+            text = self._run_inference(image, "")
 
             elapsed = time.time() - start
             log.info(f"Page {page_num + 1} processed in {elapsed:.1f}s ({len(text)} chars)")
@@ -123,40 +118,27 @@ class OCREngine:
                 error=error_msg,
             )
 
-    def _run_inference(self, image_path: str, output_dir: str) -> str:
+    def _run_inference(self, image: Image.Image, output_dir: str) -> str:
         """Call the model's infer() method and return decoded text.
 
         The model's infer() uses torch.autocast with bfloat16 internally.
-        On CPU, bfloat16 is emulated and conflicts with INT8 quantization.
-        We patch torch.autocast on CPU to use float32 instead, which is
-        both faster (native) and compatible with quantized layers.
+        We have optimized the model code to use float32 on CPU, so we no
+        longer need to patch torch.autocast here.
         """
-        import torch
-
-        # Patch autocast for CPU: force float32 instead of bfloat16
-        if self._device == "cpu":
-            _original_autocast = torch.autocast
-            def _patched_autocast(device_type, **kwargs):
-                if device_type == "cpu":
-                    kwargs["dtype"] = torch.float32
-                return _original_autocast(device_type, **kwargs)
-            torch.autocast = _patched_autocast
-
         try:
             result = self._model.infer(
                 self._tokenizer,
                 prompt=self.config.prompt,
-                image_file=image_path,
+                image_file=image,
                 output_path=output_dir,
                 base_size=self.config.base_size,
                 image_size=self.config.base_size,
                 crop_mode=self.config.crop_mode,
                 eval_mode=True,  # CRITICAL: enables text return instead of streaming
             )
-        finally:
-            # Restore original autocast
-            if self._device == "cpu":
-                torch.autocast = _original_autocast
+        except Exception as e:
+            log.error(f"Inference failed: {e}")
+            return ""
 
         if result is None:
             return ""
