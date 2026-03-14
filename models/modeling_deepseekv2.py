@@ -27,7 +27,6 @@ import torch
 import torch.nn.functional as F
 import torch.utils.checkpoint
 import torch.distributed as dist
-from einops import repeat
 from torch import nn
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 

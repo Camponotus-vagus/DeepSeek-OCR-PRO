@@ -3,16 +3,14 @@ import torch
 import torch.nn.functional as F
 import copy
 
-from contextlib import nullcontext
 import math
 from typing import Optional, Tuple
 # from megatron.model import LayerNorm
 
-from einops import rearrange
 from easydict import EasyDict as adict
 
 
-from typing import Optional, Tuple, Type
+from typing import Type
 from functools import partial
 
 
@@ -1028,7 +1026,7 @@ def _build_sam(
     prompt_embed_dim = 256
     image_size = 1024
     vit_patch_size = 16
-    image_embedding_size = image_size // vit_patch_size
+    image_size // vit_patch_size
     image_encoder=ImageEncoderViT(
             depth=encoder_depth,
             embed_dim=encoder_embed_dim,

@@ -4,7 +4,7 @@ From https://github.com/lm-sys/FastChat/blob/main/fastchat/conversation.py
 
 import dataclasses
 from enum import IntEnum, auto
-from typing import Any, Dict, List
+from typing import Dict, List
 
 
 class SeparatorStyle(IntEnum):
