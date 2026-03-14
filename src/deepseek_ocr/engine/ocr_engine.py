@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-import os
-import tempfile
 import time
 
 from PIL import Image
@@ -96,12 +94,8 @@ class OCREngine:
             if image.mode != "RGB":
                 image = image.convert("RGB")
 
-            # Save to temp file (model.infer() requires a file path)
-            with tempfile.TemporaryDirectory() as tmpdir:
-                img_path = os.path.join(tmpdir, f"page_{page_num}.jpg")
-                image.save(img_path, "JPEG", quality=95)
-
-                text = self._run_inference(img_path, tmpdir)
+            # Pass PIL Image directly to avoid redundant disk I/O and JPEG encoding
+            text = self._run_inference(image, output_dir="")
 
             elapsed = time.time() - start
             log.info(f"Page {page_num + 1} processed in {elapsed:.1f}s ({len(text)} chars)")
@@ -123,7 +117,7 @@ class OCREngine:
                 error=error_msg,
             )
 
-    def _run_inference(self, image_path: str, output_dir: str) -> str:
+    def _run_inference(self, image: Image.Image, output_dir: str) -> str:
         """Call the model's infer() method and return decoded text.
 
         The model's infer() uses torch.autocast with bfloat16 internally.
@@ -146,7 +140,7 @@ class OCREngine:
             result = self._model.infer(
                 self._tokenizer,
                 prompt=self.config.prompt,
-                image_file=image_path,
+                image_file=image,
                 output_path=output_dir,
                 base_size=self.config.base_size,
                 image_size=self.config.base_size,

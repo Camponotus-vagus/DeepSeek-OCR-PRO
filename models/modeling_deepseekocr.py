@@ -3,14 +3,11 @@ from .configuration_deepseek_v2 import DeepseekV2Config
 from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
 from typing import List, Optional, Tuple, Union
 from transformers.cache_utils import Cache
-import requests
 from PIL import Image, ImageOps, ImageDraw, ImageFont
-from io import BytesIO
 import torch
 import torch.nn as nn
 from torch.nn import CrossEntropyLoss
 from torchvision import transforms
-from torchvision.transforms.functional import InterpolationMode
 import os
 from .deepencoder import build_sam_vit_b, build_clip_l, MlpProjector
 from addict import Dict
@@ -21,13 +18,16 @@ import math
 import re
 from tqdm import tqdm
 import numpy as np
-import time
+import json
 
 
-def load_image(image_path):
+def load_image(image_input):
+    """Load image from path or use PIL Image object directly."""
+    if isinstance(image_input, Image.Image):
+        return ImageOps.exif_transpose(image_input)
 
     try:
-        image = Image.open(image_path)
+        image = Image.open(image_input)
         
         corrected_image = ImageOps.exif_transpose(image)
         
@@ -36,7 +36,7 @@ def load_image(image_path):
     except Exception as e:
         print(f"error: {e}")
         try:
-            return Image.open(image_path)
+            return Image.open(image_input)
         except:
             return None
 
@@ -62,7 +62,9 @@ def extract_coordinates_and_label(ref_text, image_width, image_height):
 
     try:
         label_type = ref_text[1]
-        cor_list = eval(ref_text[2])
+        # json.loads is faster and safer than eval
+        coords_str = ref_text[2].replace("'", '"')
+        cor_list = json.loads(coords_str)
     except Exception as e:
         print(e)
         return None
@@ -418,7 +420,6 @@ class DeepseekOCRModel(DeepseekV2Model):
                     
                     if torch.sum(patches).item() != 0:
                         # P, C, H, W = patches.shape
-                        crop_flag = 1
                         local_features_1 = sam_model(patches)
 
                         local_features_2 = vision_model(patches, local_features_1)  
@@ -668,7 +669,7 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
 
         # TODO @gante we should only keep a `cache_position` in generate, and do +=1.
         # same goes for position ids. Could also help with continued generation.
-        cache_position = torch.arange(past_length, past_length + position_ids.shape[-1], device=position_ids.device)
+        torch.arange(past_length, past_length + position_ids.shape[-1], device=position_ids.device)
 
         # if `inputs_embeds` are passed, we only want to use them in the 1st generation step
         if inputs_embeds is not None and past_key_values is None:
@@ -703,8 +704,9 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
     def infer(self, tokenizer, prompt='', image_file='', output_path = '', base_size=1024, image_size=640, crop_mode=True, test_compress=False, save_results=False, eval_mode=False):
         self.disable_torch_init()
 
-        os.makedirs(output_path, exist_ok=True)
-        os.makedirs(f'{output_path}/images', exist_ok=True)
+        if save_results and output_path:
+            os.makedirs(output_path, exist_ok=True)
+            os.makedirs(f'{output_path}/images', exist_ok=True)
 
         if prompt and image_file:
             conversation = [
@@ -716,7 +718,7 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
                     # "content": "<image>\nFree OCR. ",
                     # "content": "<image>\nParse the figure. ",
                     # "content": "<image>\nExtract the text in the image. ",
-                    "images": [f'{image_file}'],
+                    "images": [image_file],
                 },
                 {"role": "<|Assistant|>", "content": ""},
             ]
@@ -736,7 +738,7 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
                 {"role": "<|Assistant|>", "content": ""},
             ]
         else:
-            assert False, f'prompt is none!'
+            assert False, 'prompt is none!'
         
         prompt = format_messages(conversations=conversation, sft_format='plain', system_prompt='')
 
@@ -909,7 +911,8 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
 
 
         device_type = self.device.type
-        if device_type == "mps": device_type = "cpu"  # Autocast on MPS may not support bfloat16 natively
+        if device_type == "mps":
+            device_type = "cpu"  # Autocast on MPS may not support bfloat16 natively
         autocast_dtype = torch.float16 if self.device.type == "mps" else torch.bfloat16
 
         if not eval_mode:
