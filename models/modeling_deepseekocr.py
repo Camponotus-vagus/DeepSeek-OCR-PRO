@@ -24,13 +24,20 @@ import json
 def load_image(image_input):
     """Load image from path or use PIL Image object directly."""
     if isinstance(image_input, Image.Image):
-        return ImageOps.exif_transpose(image_input)
+        # Only transpose if EXIF data is present to avoid redundant copy
+        if image_input.getexif():
+            return ImageOps.exif_transpose(image_input)
+        return image_input
 
     try:
         image = Image.open(image_input)
-        
-        corrected_image = ImageOps.exif_transpose(image)
-        
+
+        # Only transpose if EXIF data is present to avoid redundant copy
+        if image.getexif():
+            corrected_image = ImageOps.exif_transpose(image)
+        else:
+            corrected_image = image
+
         return corrected_image
         
     except Exception as e:
@@ -292,14 +299,11 @@ def load_pil_images(conversations: List[Dict[str, str]]) -> List[Image.Image]:
             continue
 
         for image_path in message["images"]:
-            # print('----------------')
-            # print(image_path)
-            # print('----------------')
-            # exit()
-            
             # pil_img = Image.open(image_path)
             pil_img = load_image(image_path)
-            pil_img = pil_img.convert("RGB")
+            # Only convert to RGB if not already in RGB mode to avoid redundant copy
+            if pil_img.mode != "RGB":
+                pil_img = pil_img.convert("RGB")
             pil_images.append(pil_img)
 
     return pil_images
@@ -749,11 +753,11 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
         valid_img_tokens = 0
         ratio = 1
 
-        image_draw = images[0].copy()
+        image_draw = images[0]
 
         w,h = image_draw.size
         # print(w, h)
-        ratio = 1 - ((max(w, h) - min(w, h)) / (max(w, h)))
+        ratio = min(w, h) / max(w, h)
     
 
         image_transform=BasicImageTransform(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5), normalize=True)
