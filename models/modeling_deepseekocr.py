@@ -24,13 +24,14 @@ import json
 def load_image(image_input):
     """Load image from path or use PIL Image object directly."""
     if isinstance(image_input, Image.Image):
-        return ImageOps.exif_transpose(image_input)
+        return ImageOps.exif_transpose(image_input) if image_input.getexif() else image_input
 
     try:
         image = Image.open(image_input)
-        
-        corrected_image = ImageOps.exif_transpose(image)
-        
+
+        # Optimization: only transpose if EXIF data is present
+        corrected_image = ImageOps.exif_transpose(image) if image.getexif() else image
+
         return corrected_image
         
     except Exception as e:
@@ -299,7 +300,9 @@ def load_pil_images(conversations: List[Dict[str, str]]) -> List[Image.Image]:
             
             # pil_img = Image.open(image_path)
             pil_img = load_image(image_path)
-            pil_img = pil_img.convert("RGB")
+            # Optimization: only convert if not already in RGB mode
+            if pil_img.mode != "RGB":
+                pil_img = pil_img.convert("RGB")
             pil_images.append(pil_img)
 
     return pil_images
@@ -433,10 +436,10 @@ class DeepseekOCRModel(DeepseekV2Model):
                         global_features = torch.cat((global_features_2[:, 1:], global_features_1.flatten(2).permute(0, 2, 1)), dim=-1) 
                         global_features = self.projector(global_features)
 
-                        print('=====================')
-                        print('BASE: ', global_features.shape)
-                        print('PATCHES: ', local_features.shape)
-                        print('=====================')
+                        # print('=====================')
+                        # print('BASE: ', global_features.shape)
+                        # print('PATCHES: ', local_features.shape)
+                        # print('=====================')
 
                         _, hw, n_dim = global_features.shape
                         h = w = int(hw ** 0.5)
@@ -476,10 +479,10 @@ class DeepseekOCRModel(DeepseekV2Model):
                         global_features_2 = vision_model(image_ori, global_features_1) 
                         global_features = torch.cat((global_features_2[:, 1:], global_features_1.flatten(2).permute(0, 2, 1)), dim=-1) 
                         global_features = self.projector(global_features)
-                        print('=====================')
-                        print('BASE: ', global_features.shape)
-                        print('NO PATCHES')
-                        print('=====================')
+                        # print('=====================')
+                        # print('BASE: ', global_features.shape)
+                        # print('NO PATCHES')
+                        # print('=====================')
                         _, hw, n_dim = global_features.shape
                         h = w = int(hw ** 0.5)
 
@@ -749,9 +752,8 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
         valid_img_tokens = 0
         ratio = 1
 
-        image_draw = images[0].copy()
-
-        w,h = image_draw.size
+        # Optimization: delay copy until needed for result visualization
+        w, h = images[0].size
         # print(w, h)
         ratio = 1 - ((max(w, h) - min(w, h)) / (max(w, h)))
     
@@ -986,6 +988,7 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
 
             matches_ref, matches_images, mathes_other = re_match(outputs)
             # print(matches_ref)
+            image_draw = images[0].copy()
             result = process_image_with_refs(image_draw, matches_ref, output_path)
 
 
