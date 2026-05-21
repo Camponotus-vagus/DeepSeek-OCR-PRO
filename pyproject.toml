@@ -37,6 +37,24 @@ markers = [
     "slow: marks tests that require the model (deselect with '-m \"not slow\"')",
 ]
 
+[tool.coverage.run]
+source = ["src/surya_ocr"]
+branch = true
+omit = [
+    "src/surya_ocr/__main__.py",
+    "src/surya_ocr/gui/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
+
 [tool.ruff]
 line-length = 120
 target-version = "py310"

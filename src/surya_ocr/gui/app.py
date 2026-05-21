@@ -123,7 +123,7 @@ class OCRApp:
             formats = ["txt"]
 
         lang_text = self.lang_entry.get().strip() or "it,la"
-        languages = [l.strip() for l in lang_text.split(",")]
+        languages = [lang.strip() for lang in lang_text.split(",")]
 
         return OCRConfig(
             pdf_paths=list(pdf_paths),

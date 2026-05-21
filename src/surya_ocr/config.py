@@ -73,7 +73,7 @@ class OCRConfig:
             else:
                 pdf_paths.append(str(p))
 
-        languages = [l.strip() for l in args.languages.split(",")] if args.languages else ["it", "la"]
+        languages = [lang.strip() for lang in args.languages.split(",")] if args.languages else ["it", "la"]
 
         return cls(
             pdf_paths=pdf_paths,
